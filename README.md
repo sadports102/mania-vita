@@ -128,7 +128,7 @@ You need [VitaSDK](https://vitasdk.org/) with these libraries (install them with
 SDL2, SDL2_image, SDL2_mixer, SDL2_ttf, zlib
 
 ```
-git clone https://github.com/YOUR_NAME/maniavita.git
+git clone https://github.com/sadports102/maniavita.git
 cd maniavita
 mkdir build
 cd build
