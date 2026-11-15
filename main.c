@@ -15,7 +15,8 @@
  *  Maps: 1K, 2K, 3K, 4K and 5K.  mp4 (H.264) video backgrounds
  *  (.avi / .flv videos need a converted .mp4 with the same name).
  *  Song select:  X play, Square mods, Circle sort/search,
- *                Triangle settings, Select scores, Start rescan
+ *                Triangle settings, Select scores, Start local/global
+ *  Settings:     L/R Settings / Profile tab, Start rescan songs
  *  Mods: EZ NF HR SD PF HD FI FL MR RD AT CM  (health bar + Failed screen)
  * ===================================================================*/
 #include <SDL2/SDL.h>
@@ -274,6 +275,8 @@ static int opt_video = 1;           /* mp4 video backgrounds */
 static int opt_sfx_volume = 60;     /* hitsound volume 0-100 (separate from music) */
 static int opt_judge_left = 0;      /* 1 = combo + judgements left of the playfield */
 static int opt_note_color = 0;      /* 0 = skin's own colours */
+static int opt_lb_global = 0;       /* song select scores: 0 = local, 1 = global */
+static int opt_ingame_lb = 2;       /* in-game leaderboard: 0 = off, 1 = local, 2 = global */
 static int opt_sort = 0;            /* song list order */
 static char search_text[128] = "";  /* song search (not saved) */
 static char opt_skin[128] = "";
@@ -1030,7 +1033,6 @@ static void song_select_set(int gi) {
     g_sel_diff  = clampi(g_groups[gi].last_diff, 0, g_groups[gi].count - 1);
 }
 
-/* ======================= END OF PART 1 (of 6) ======================= */
 /* ================= Skins ================= */
 /* key mode index: 1K = 0 ... 5K = 4 */
 static int kidx(int keys) { return clampi(keys, 1, MAX_KEYS) - 1; }
@@ -1620,45 +1622,8 @@ static const char *fc_tag(const int *n, SDL_Color *col) {
     return below300 == 0 ? "PFC" : "FC";
 }
 
-static void draw_leaderboard(void) {
-    const int X = 620, Y = 44, W = 324, ROW = 52;
-    int idx = selected_map_index();
-    if (idx != lb_for_map) lb_refresh(idx);
-
-    fill(X, Y, W, 40 + LB_SHOW * ROW + 6, 0, 0, 0, 160);
-    char buf[128], sc[24], date[16], mb[64], fb[64];
-    snprintf(buf, sizeof buf, "Local scores (%d)", lb_total);
-    draw_text(font_small, buf, X + 12, Y + 8, C_WHITE, 0);
-    if (lb_count == 0) {
-        draw_text(font_small, "No scores yet", X + 12, Y + 50, C_GREY, 0);
-        return;
-    }
-    for (int i = 0; i < lb_count; i++) {
-        int y = Y + 40 + i * ROW;
-        if (i == 0) fill(X + 6, y, W - 12, ROW - 6, 90, 75, 40, 210);
-        else        fill(X + 6, y, W - 12, ROW - 6, 45, 45, 65, 210);
-
-        SDL_Color gc;
-        const char *g = lb_grade(lb[i].acc, &gc);
-        draw_text(font_big, g, X + 14, y - 2, gc, 0);
-
-        fmt_score(lb[i].score, sc, sizeof sc);
-        snprintf(buf, sizeof buf, "#%d  %s", i + 1, sc);
-        draw_text(font_small, buf, X + 76, y + 1, C_WHITE, 0);
-        if (lb[i].mods) {                                   /* mods on the right */
-            mods_string(lb[i].mods, mb, sizeof mb);
-            fit_text(font_small, mb, 100, fb, sizeof fb);
-            draw_text(font_small, fb, X + W - 14, y + 1, C_YELLOW, 2);
-        }
-
-        fmt_date(lb[i].when, "%y-%m-%d", date, sizeof date);
-        snprintf(buf, sizeof buf, "%.2f%%  %dx  %s", lb[i].acc, lb[i].combo, date);
-        int tw = draw_text(font_small, buf, X + 76, y + 23, C_GREY, 0);
-        SDL_Color fcc;
-        const char *fc = fc_tag(lb[i].n, &fcc);             /* FC / PFC after the date */
-        if (fc) draw_text(font_small, fc, X + 76 + tw + 10, y + 23, fcc, 0);
-    }
-}
+/* (the song select leaderboard - Local / Global - is drawn further down,
+   just above "Song select") */
 
 /* ================= Note colours ================= */
 #define NOTE_COLORS 6
@@ -1713,6 +1678,8 @@ static void settings_save(void) {
             opt_hit_error, opt_touch, opt_video);
     fprintf(f, "judge_left=%d\n", opt_judge_left);
     fprintf(f, "sfx_volume=%d\n", opt_sfx_volume);
+    fprintf(f, "lb_global=%d\n", opt_lb_global);
+    fprintf(f, "ingame_lb=%d\n", opt_ingame_lb);
     for (int k = 0; k < KEYMODES; k++)              /* bind1_0 ... bind5_4 */
         for (int c = 0; c <= k; c++)
             fprintf(f, "bind%d_%d=%d\n", k + 1, c, binds[k][c]);
@@ -1754,6 +1721,8 @@ static void settings_load(void) {
         else if (!strcmp(k, "video"))       opt_video = iv;
         else if (!strcmp(k, "judge_left"))  opt_judge_left = iv;
         else if (!strcmp(k, "sfx_volume"))  opt_sfx_volume = iv;
+        else if (!strcmp(k, "lb_global"))   opt_lb_global = iv;
+        else if (!strcmp(k, "ingame_lb"))   opt_ingame_lb = iv;
         else if (sscanf(k, "bind%d_%d", &kk, &cc) == 2 &&
                  kk >= 1 && kk <= MAX_KEYS && cc >= 0 && cc < kk)
             binds[kk - 1][cc] = clampi(iv, -1, SDL_CONTROLLER_BUTTON_MAX - 1);
@@ -1781,9 +1750,9 @@ static void settings_load(void) {
     opt_touch       = !!opt_touch;
     opt_video       = !!opt_video;
     opt_judge_left  = !!opt_judge_left;
+    opt_lb_global   = !!opt_lb_global;
 }
 
-/* ======================= END OF PART 2 (of 6) ======================= */
 /* ================= Input devices ================= */
 static SDL_GameController *pad = NULL;
 static SDL_Joystick *joy = NULL;
@@ -2156,6 +2125,664 @@ static void sfx_play_miss(void) {
     sfx_miss_at = t;
     Mix_PlayChannel(-1, sfx_miss, 0);
 }
+
+/* ===== Online leaderboard ===== */
+#include <curl/curl.h>
+#include <psp2/net/net.h>
+#include <psp2/net/netctl.h>
+#include <psp2/sysmodule.h>
+#include <math.h>
+#include <time.h>
+#include <ctype.h>
+#include <openssl/ssl.h>
+#include <openssl/x509.h>
+#include <openssl/pem.h>
+#include <openssl/err.h>
+
+#define LB_URL      "https://maniavita.com"
+#define LB_PLAYER   "ux0:data/osumania/player.txt"
+#define LB_PENDING  "ux0:data/osumania/pending.txt"
+#define LB_MAX_ROWS 50
+
+typedef struct {
+    int rank; char name[17]; int score; float acc; int combo;
+    char mods[48]; float pp; int miss;
+} LbRow;
+
+static char lb_name[17] = "";
+static char lb_token[33] = "";
+
+static SDL_mutex  *lb_mx = NULL;
+static SDL_sem    *lb_wake = NULL;
+static SDL_Thread *lb_thread = NULL;
+static volatile int lb_quit_flag = 0;
+
+/* Global top list for one map (song select, Global view) */
+static LbRow lb_rows[LB_MAX_ROWS];
+static int   lb_row_n = 0;
+static volatile int lb_state = 0;    /* 0 nothing, 1 loading, 2 loaded, 3 offline/error */
+static char  lb_state_map[512] = ""; /* .osu file the rows belong to */
+static char  lb_want_map[512] = "";  /* .osu file whose top list is wanted */
+
+/* Profile (Settings > Profile tab) */
+typedef struct { char title[200]; int keys; char mods[48]; float acc, pp; } PfPlay;
+static PfPlay pf_plays[10];
+static int    pf_play_n = 0, pf_rank = 0, pf_plays_total = 0;
+static float  pf_pp = 0;
+static char   pf_name[17] = "";
+static char   pf_msg[96] = "";
+static volatile int pf_state = 0;    /* 0 nothing, 1 loading, 2 loaded, 3 offline/error, 4 not on the server yet */
+static int    pf_want_keys = 0;      /* 0 = all keys, 1-5 = that key count */
+
+/* Result of the last score sent (used by the Results screen) */
+static volatile int lb_sub_state = 0; /* 0 nothing, 1 sending, 2 done, 3 saved offline, 4 rejected */
+static int   lb_sub_rank = 0, lb_sub_prank = 0, lb_sub_improved = 0;
+static float lb_sub_pp = 0, lb_sub_total = 0;
+static char  lb_sub_msg[96] = "";
+static char  lb_last_body[2048] = "";
+
+/* --- MD5 of the .osu file (identifies the map) --- */
+static uint32_t lb_md5_k[64];
+
+static void lb_md5_block(uint32_t h[4], const uint8_t *p)
+{
+    static const uint8_t sh[16] = {7,12,17,22, 5,9,14,20, 4,11,16,23, 6,10,15,21};
+    uint32_t w[16], a = h[0], b = h[1], c = h[2], d = h[3];
+    for (int i = 0; i < 16; i++)
+        w[i] = p[i*4] | (p[i*4+1] << 8) | (p[i*4+2] << 16) | ((uint32_t)p[i*4+3] << 24);
+    for (int i = 0; i < 64; i++) {
+        uint32_t f; int g;
+        if (i < 16)      { f = (b & c) | (~b & d); g = i; }
+        else if (i < 32) { f = (d & b) | (~d & c); g = (5*i + 1) & 15; }
+        else if (i < 48) { f = b ^ c ^ d;          g = (3*i + 5) & 15; }
+        else             { f = c ^ (b | ~d);       g = (7*i) & 15; }
+        int s = sh[(i / 16) * 4 + (i & 3)];
+        uint32_t x = a + f + lb_md5_k[i] + w[g];
+        a = d; d = c; c = b;
+        b = b + ((x << s) | (x >> (32 - s)));
+    }
+    h[0] += a; h[1] += b; h[2] += c; h[3] += d;
+}
+
+static int lb_md5_file(const char *path, char out[33])
+{
+    if (!lb_md5_k[0])
+        for (int i = 0; i < 64; i++)
+            lb_md5_k[i] = (uint32_t)(fabs(sin(i + 1.0)) * 4294967296.0);
+    FILE *f = fopen(path, "rb");
+    if (!f) return 0;
+    uint32_t h[4] = {0x67452301, 0xefcdab89, 0x98badcfe, 0x10325476};
+    uint8_t buf[64], last[128];
+    uint64_t total = 0;
+    size_t n;
+    while ((n = fread(buf, 1, 64, f)) == 64) { lb_md5_block(h, buf); total += 64; }
+    fclose(f);
+    total += n;
+    memset(last, 0, sizeof last);
+    memcpy(last, buf, n);
+    last[n] = 0x80;
+    int blocks = (n < 56) ? 1 : 2;
+    uint64_t bits = total * 8;
+    for (int i = 0; i < 8; i++) last[blocks * 64 - 8 + i] = (uint8_t)(bits >> (8 * i));
+    lb_md5_block(h, last);
+    if (blocks == 2) lb_md5_block(h, last + 64);
+    for (int i = 0; i < 16; i++)
+        sprintf(out + i * 2, "%02x", (unsigned)((h[i / 4] >> ((i % 4) * 8)) & 0xff));
+    out[32] = 0;
+    return 1;
+}
+
+/* --- Player name + secret token (player.txt) --- */
+static void lb_save_player(void)
+{
+    FILE *f = fopen(LB_PLAYER, "w");
+    if (!f) return;
+    fprintf(f, "name=%s\ntoken=%s\n", lb_name, lb_token);
+    fclose(f);
+}
+
+static void lb_load_player(void)
+{
+    FILE *f = fopen(LB_PLAYER, "r");
+    if (f) {
+        char line[128];
+        while (fgets(line, sizeof line, f)) {
+            line[strcspn(line, "\r\n")] = 0;
+            if (!strncmp(line, "name=", 5))  snprintf(lb_name, sizeof lb_name, "%s", line + 5);
+            if (!strncmp(line, "token=", 6)) snprintf(lb_token, sizeof lb_token, "%s", line + 6);
+        }
+        fclose(f);
+    }
+    if (strlen(lb_token) < 32) {   /* first run: make a secret token */
+        srand((unsigned)time(NULL) ^ (unsigned)SDL_GetPerformanceCounter());
+        for (int i = 0; i < 32; i++) lb_token[i] = "0123456789abcdef"[rand() & 15];
+        lb_token[32] = 0;
+        lb_save_player();
+    }
+}
+
+static int lb_name_ok(void)
+{
+    size_t n = strlen(lb_name);
+    return n >= 3 && n <= 16;
+}
+
+/* Keeps only letters, numbers, _ and - (spaces become _) */
+static void lb_set_name(const char *s)
+{
+    int j = 0;
+    for (int i = 0; s[i] && j < 16; i++) {
+        char ch = s[i];
+        if (ch == ' ') ch = '_';
+        if (isalnum((unsigned char)ch) || ch == '_' || ch == '-') lb_name[j++] = ch;
+    }
+    lb_name[j] = 0;
+    lb_save_player();
+}
+
+/* --- HTTP --- */
+typedef struct { char *p; size_t n, cap; } LbBuf;
+
+static size_t lb_write_cb(void *data, size_t sz, size_t nm, void *user)
+{
+    LbBuf *b = (LbBuf *)user;
+    size_t k = sz * nm, room = b->cap - 1 - b->n;
+    size_t c = k < room ? k : room;
+    memcpy(b->p + b->n, data, c);
+    b->n += c;
+    b->p[b->n] = 0;
+    return k;
+}
+
+static int lb_online(void)
+{
+    int st = 0;
+    if (sceNetCtlInetGetState(&st) < 0) return 0;
+    return st == SCE_NETCTL_STATE_CONNECTED;
+}
+
+/* why the last request failed (also written to online_log.txt) */
+#define LB_LOG "ux0:data/osumania/online_log.txt"
+static char lb_err[96] = "";
+
+/* largest block that can still be allocated, in KB (for the log) */
+static unsigned lb_free_kb(void)
+{
+    for (size_t s = (size_t)64 << 20; s >= 16384; s /= 2) {
+        void *p = malloc(s);
+        if (p) { free(p); return (unsigned)(s / 1024); }
+    }
+    return 0;
+}
+
+static void lb_fail(const char *why)
+{
+    char when[32] = "";
+    time_t t = time(NULL);
+    struct tm *tm = localtime(&t);
+    if (tm) strftime(when, sizeof when, "%Y-%m-%d %H:%M:%S", tm);
+    SDL_LockMutex(lb_mx);
+    snprintf(lb_err, sizeof lb_err, "%s", why);
+    FILE *f = fopen(LB_LOG, "a");
+    if (f) { fprintf(f, "[%s] %s (free %u KB)\n", when, why, lb_free_kb()); fclose(f); }
+    SDL_UnlockMutex(lb_mx);
+}
+
+/* certificates: read cacert.pem once and keep only the ones this OpenSSL
+   can load (one bad certificate makes curl reject the whole file) */
+static char  *lb_ca_data = NULL;
+static size_t lb_ca_len = 0;
+static int lb_ca_ok = 0, lb_ca_bad = 0;
+
+/* only the root certificates Cloudflare uses for maniavita.com.
+   (each certificate curl keeps uses a lock, and the Vita runs out of those
+   if all 118 from cacert.pem are loaded) */
+static int lb_ca_wanted(X509 *x)
+{
+    static const char *keep[] = {
+        "ISRG Root", "GTS Root", "GlobalSign", "SSL.com",
+        "USERTrust", "Sectigo", "AAA Certificate Services", "DigiCert Global Root"
+    };
+    char name[256];
+    name[0] = 0;
+    X509_NAME_oneline(X509_get_subject_name(x), name, sizeof name);
+    for (int i = 0; i < (int)(sizeof keep / sizeof keep[0]); i++)
+        if (strstr(name, keep[i])) return 1;
+    return 0;
+}
+
+static void lb_ca_load(void)
+{
+    if (lb_ca_data) return;
+    static const char *paths[] = { "app0:cacert.pem", "ux0:data/osumania/cacert.pem" };
+    char *raw = NULL;
+    long sz = 0;
+    for (int i = 0; i < 2 && !raw; i++) {
+        FILE *f = fopen(paths[i], "rb");
+        if (!f) continue;
+        fseek(f, 0, SEEK_END);
+        sz = ftell(f);
+        fseek(f, 0, SEEK_SET);
+        if (sz > 0 && (raw = malloc(sz + 1)) != NULL) {
+            sz = (long)fread(raw, 1, sz, f);
+            raw[sz] = 0;
+        }
+        fclose(f);
+    }
+    if (!raw) return;
+
+    char *good = malloc(sz + 1);
+    if (!good) { free(raw); return; }
+    FILE *lg = fopen("ux0:data/osumania/ca_log.txt", "w");
+    size_t len = 0;
+    int ok = 0, bad = 0, n = 0;
+    const char *p = raw;
+    while ((p = strstr(p, "-----BEGIN CERTIFICATE-----")) != NULL) {
+        const char *e = strstr(p, "-----END CERTIFICATE-----");
+        if (!e) break;
+        e += 25;
+        n++;
+        ERR_clear_error();
+        X509 *x = NULL;
+        int keep = 0;
+        BIO *bio = BIO_new_mem_buf((void *)p, (int)(e - p));
+        if (bio) {
+            x = PEM_read_bio_X509(bio, NULL, NULL, NULL);
+            BIO_free(bio);
+        }
+        if (!x) {
+            bad++;
+            if (lg) {
+                char eb[256];
+                unsigned long ec = ERR_get_error();
+                ERR_error_string_n(ec, eb, sizeof eb);
+                fprintf(lg, "cert %d failed: %s\n", n, ec ? eb : "no OpenSSL error");
+            }
+        } else {
+            keep = lb_ca_wanted(x);
+            if (keep && lg) {
+                char name[256];
+                name[0] = 0;
+                X509_NAME_oneline(X509_get_subject_name(x), name, sizeof name);
+                fprintf(lg, "keep %d: %s\n", n, name);
+            }
+            X509_free(x);   /* free right away so its lock is given back */
+        }
+        if (keep) {
+            memcpy(good + len, p, (size_t)(e - p));
+            len += (size_t)(e - p);
+            good[len++] = '\n';
+            ok++;
+        }
+        p = e;
+    }
+    good[len] = 0;
+    ERR_clear_error();
+    free(raw);
+    if (lg) { fprintf(lg, "=== %d kept, %d failed, %d total ===\n", ok, bad, n); fclose(lg); }
+    lb_ca_ok = ok;
+    lb_ca_bad = bad;
+    if (ok == 0) { free(good); return; }
+    lb_ca_data = good;
+    lb_ca_len = len;
+}
+
+/* 1 = the server answered (reply in out), 0 = no Wi-Fi / no connection */
+static int lb_http(const char *path, const char *post, char *out, size_t cap)
+{
+    out[0] = 0;
+    if (!lb_online()) { lb_fail("no Wi-Fi connection"); return 0; }
+    CURL *c = curl_easy_init();
+    if (!c) { lb_fail("curl init failed"); return 0; }
+    char url[600];
+    snprintf(url, sizeof url, "%s%s", LB_URL, path);
+    LbBuf b = { out, 0, cap };
+    char cerr[CURL_ERROR_SIZE];
+    cerr[0] = 0;
+    curl_easy_setopt(c, CURLOPT_URL, url);
+    lb_ca_load();
+    if (!lb_ca_data) {
+        curl_easy_cleanup(c);
+        lb_fail("cacert.pem could not be read");
+        return 0;
+    }
+    struct curl_blob ca_blob = { lb_ca_data, lb_ca_len, CURL_BLOB_COPY };
+    curl_easy_setopt(c, CURLOPT_CAINFO, NULL);
+    curl_easy_setopt(c, CURLOPT_CAPATH, NULL);
+    curl_easy_setopt(c, CURLOPT_CAINFO_BLOB, &ca_blob);
+    curl_easy_setopt(c, CURLOPT_USERAGENT, "maniavita/1.0");
+    curl_easy_setopt(c, CURLOPT_CONNECTTIMEOUT, 8L);
+    curl_easy_setopt(c, CURLOPT_TIMEOUT, 15L);
+    curl_easy_setopt(c, CURLOPT_NOSIGNAL, 1L);
+    curl_easy_setopt(c, CURLOPT_ERRORBUFFER, cerr);
+    curl_easy_setopt(c, CURLOPT_WRITEFUNCTION, lb_write_cb);
+    curl_easy_setopt(c, CURLOPT_WRITEDATA, &b);
+    if (post) curl_easy_setopt(c, CURLOPT_POSTFIELDS, post);
+    CURLcode r = curl_easy_perform(c);
+    long code = 0;
+    curl_easy_getinfo(c, CURLINFO_RESPONSE_CODE, &code);
+    curl_easy_cleanup(c);
+
+    char why[96];
+    if (r != CURLE_OK) {                         /* never reached the server */
+        snprintf(why, sizeof why, "%s (certs %d ok, %d bad)",
+                 cerr[0] ? cerr : curl_easy_strerror(r), lb_ca_ok, lb_ca_bad);
+        lb_fail(why);
+        return 0;
+    }
+    if (strncmp(out, "OK", 2) && strncmp(out, "ERR", 3)) {   /* got a web page, not our reply */
+        char start[48];
+        snprintf(start, sizeof start, "%s", out);
+        for (char *p = start; *p; p++) if (*p == '\n' || *p == '\r' || *p == '\t') *p = ' ';
+        snprintf(why, sizeof why, "HTTP %ld: %s", code, start);
+        lb_fail(why);
+        return 0;
+    }
+    return 1;
+}
+
+/* --- Download a map's top 50 (osu = path of the .osu file) --- */
+static void lb_do_top(const char *osu, char *buf, size_t cap)
+{
+    LbRow rows[LB_MAX_ROWS];
+    char md5[33], path[64];
+    int n = 0, ok = 0;
+    if (!lb_md5_file(osu, md5)) lb_fail("couldn't read the .osu file");
+    else {
+        snprintf(path, sizeof path, "/top?map=%s", md5);
+        if (lb_http(path, NULL, buf, cap)) {
+            ok = !strncmp(buf, "OK", 2);
+            if (!ok) {
+                char why[96];
+                snprintf(why, sizeof why, "top list: %.60s", buf);
+                why[strcspn(why, "\r\n")] = 0;
+                lb_fail(why);
+            }
+        }
+    }
+    if (ok) {
+        char *line = strchr(buf, '\n');
+        while (line && n < LB_MAX_ROWS) {
+            line++;
+            char *end = strchr(line, '\n');
+            if (end) *end = 0;
+            LbRow r;
+            memset(&r, 0, sizeof r);
+            if (sscanf(line, "%d\t%16[^\t]\t%d\t%f\t%d\t%47[^\t]\t%f\t%d",
+                       &r.rank, r.name, &r.score, &r.acc, &r.combo,
+                       r.mods, &r.pp, &r.miss) == 8) {
+                if (!strcmp(r.mods, "-")) r.mods[0] = 0;
+                rows[n++] = r;
+            }
+            line = end;
+        }
+    }
+    SDL_LockMutex(lb_mx);
+    if (!strcmp(lb_want_map, osu)) {   /* ignore if the player moved to another map */
+        memcpy(lb_rows, rows, sizeof(LbRow) * n);
+        lb_row_n = n;
+        lb_state = ok ? 2 : 3;
+        snprintf(lb_state_map, sizeof lb_state_map, "%s", osu);
+    }
+    SDL_UnlockMutex(lb_mx);
+}
+
+/* --- Download the player's profile (keys 0 = all key counts) --- */
+static void lb_do_profile(int keys, char *buf, size_t cap)
+{
+    PfPlay plays[10];
+    char path[128], name[17] = "", msg[96] = "";
+    int n = 0, rank = 0, total = 0, st = 3;
+    float pp = 0;
+    char *en = curl_easy_escape(NULL, lb_name, 0);
+    if (keys) snprintf(path, sizeof path, "/player?name=%s&keys=%d", en ? en : "", keys);
+    else      snprintf(path, sizeof path, "/player?name=%s", en ? en : "");
+    curl_free(en);
+
+    if (!lb_http(path, NULL, buf, cap)) {
+        SDL_LockMutex(lb_mx);
+        snprintf(msg, sizeof msg, "%s", lb_err);
+        SDL_UnlockMutex(lb_mx);
+    } else if (!strncmp(buf, "ERR no player", 13)) {
+        st = 4;
+    } else if (!strncmp(buf, "OK ", 3) &&
+               sscanf(buf + 3, "%16[^\t]\t%f\t%d\t%d", name, &pp, &rank, &total) == 4) {
+        st = 2;
+        char *line = strchr(buf, '\n');
+        while (line && n < 10) {
+            line++;
+            char *end = strchr(line, '\n');
+            if (end) *end = 0;
+            PfPlay p;
+            memset(&p, 0, sizeof p);
+            if (sscanf(line, "%199[^\t]\t%d\t%47[^\t]\t%f\t%f",
+                       p.title, &p.keys, p.mods, &p.acc, &p.pp) == 5) {
+                if (!strcmp(p.mods, "-")) p.mods[0] = 0;
+                plays[n++] = p;
+            }
+            line = end;
+        }
+    } else {
+        snprintf(msg, sizeof msg, "%.60s", buf);
+        msg[strcspn(msg, "\r\n")] = 0;
+        lb_fail(msg);
+    }
+    SDL_LockMutex(lb_mx);
+    if (pf_want_keys == keys) {        /* ignore if the player switched key mode */
+        memcpy(pf_plays, plays, sizeof(PfPlay) * n);
+        pf_play_n = n;
+        pf_rank = rank;
+        pf_plays_total = total;
+        pf_pp = pp;
+        snprintf(pf_name, sizeof pf_name, "%s", name);
+        snprintf(pf_msg, sizeof pf_msg, "%s", msg);
+        pf_state = st;
+    }
+    SDL_UnlockMutex(lb_mx);
+}
+
+/* --- Offline queue (pending.txt, one score per line) --- */
+static void lb_queue_add(const char *body)
+{
+    SDL_LockMutex(lb_mx);
+    FILE *f = fopen(LB_PENDING, "a");
+    if (f) { fprintf(f, "%s\n", body); fclose(f); }
+    SDL_UnlockMutex(lb_mx);
+    SDL_SemPost(lb_wake);
+}
+
+static int lb_queue_first(char *out, size_t cap)
+{
+    int got = 0;
+    SDL_LockMutex(lb_mx);
+    FILE *f = fopen(LB_PENDING, "r");
+    if (f) {
+        if (fgets(out, (int)cap, f)) { out[strcspn(out, "\r\n")] = 0; got = 1; }
+        fclose(f);
+    }
+    SDL_UnlockMutex(lb_mx);
+    return got;
+}
+
+static void lb_queue_pop(void)
+{
+    SDL_LockMutex(lb_mx);
+    FILE *f = fopen(LB_PENDING, "rb");
+    if (f) {
+        fseek(f, 0, SEEK_END);
+        long sz = ftell(f);
+        fseek(f, 0, SEEK_SET);
+        char *all = malloc(sz + 1);
+        size_t n = all ? fread(all, 1, sz, f) : 0;
+        fclose(f);
+        if (all) {
+            all[n] = 0;
+            char *rest = strchr(all, '\n');
+            rest = rest ? rest + 1 : all + n;
+            if (*rest) {
+                FILE *w = fopen(LB_PENDING, "wb");
+                if (w) { fputs(rest, w); fclose(w); }
+            } else {
+                remove(LB_PENDING);
+            }
+            free(all);
+        }
+    }
+    SDL_UnlockMutex(lb_mx);
+}
+
+/* --- Background thread --- */
+static int lb_worker(void *arg)
+{
+    (void)arg;
+    char *buf  = malloc(16384);
+    char *body = malloc(2048);
+    char *want = malloc(512);
+    if (!buf || !body || !want) { free(buf); free(body); free(want); return 0; }
+    Uint32 last_send = 0, pause_until = 0;
+
+    while (!lb_quit_flag) {
+        SDL_SemWaitTimeout(lb_wake, 1000);
+        if (lb_quit_flag) break;
+
+        /* 1. Song select (Global view) wants a map's top list */
+        SDL_LockMutex(lb_mx);
+        snprintf(want, 512, "%s", lb_want_map);
+        int need = want[0] && lb_state == 1;
+        SDL_UnlockMutex(lb_mx);
+        if (need) lb_do_top(want, buf, 16384);
+
+        /* 2. Profile tab wants the player's stats */
+        SDL_LockMutex(lb_mx);
+        int pkeys = pf_want_keys, pneed = pf_state == 1;
+        SDL_UnlockMutex(lb_mx);
+        if (pneed) lb_do_profile(pkeys, buf, 16384);
+
+        /* 3. Send one waiting score (3 s apart) */
+        Uint32 now = SDL_GetTicks();
+        if (now < pause_until || now - last_send < 3200) continue;
+        if (!lb_queue_first(body, 2048)) continue;
+        if (!body[0]) { lb_queue_pop(); continue; }
+
+        SDL_LockMutex(lb_mx);
+        int is_last = !strcmp(body, lb_last_body);
+        SDL_UnlockMutex(lb_mx);
+
+        last_send = SDL_GetTicks();
+        if (!lb_http("/submit", body, buf, 16384)) {
+            if (lb_sub_state == 1) {                /* the newest score waits behind this one too */
+                SDL_LockMutex(lb_mx);
+                snprintf(lb_sub_msg, sizeof lb_sub_msg, "%s", lb_err);
+                SDL_UnlockMutex(lb_mx);
+                lb_sub_state = 3;                   /* saved, sent later */
+            }
+            pause_until = SDL_GetTicks() + 30000;
+            continue;
+        }
+        if (!strncmp(buf, "ERR too fast", 12) || !strncmp(buf, "ERR server", 10)) {
+            pause_until = SDL_GetTicks() + 10000;   /* try again soon */
+            continue;
+        }
+        lb_queue_pop();
+        SDL_LockMutex(lb_mx);
+        if (is_last) {
+            if (!strncmp(buf, "OK", 2)) {
+                sscanf(buf + 2, "%d %d %f %f %d", &lb_sub_improved, &lb_sub_rank,
+                       &lb_sub_pp, &lb_sub_total, &lb_sub_prank);
+                lb_sub_state = 2;
+            } else {
+                snprintf(lb_sub_msg, sizeof lb_sub_msg, "%s", buf + 4);
+                lb_sub_msg[strcspn(lb_sub_msg, "\r\n")] = 0;
+                lb_sub_state = 4;
+            }
+        }
+        if (lb_want_map[0]) lb_state = 1;           /* refresh the open top list */
+        SDL_UnlockMutex(lb_mx);
+    }
+    free(buf);
+    free(body);
+    free(want);
+    return 0;
+}
+
+/* --- Used by the rest of the game --- */
+/* asks for a map's global top list (osu = path of the .osu file) */
+static void lb_request_top(const char *osu)
+{
+    SDL_LockMutex(lb_mx);
+    snprintf(lb_want_map, sizeof lb_want_map, "%s", osu);
+    lb_state = 1;
+    SDL_UnlockMutex(lb_mx);
+    SDL_SemPost(lb_wake);
+}
+
+/* asks for the player's profile (keys 0 = all key counts) */
+static void pf_request(int keys)
+{
+    SDL_LockMutex(lb_mx);
+    pf_want_keys = keys;
+    pf_state = 1;
+    SDL_UnlockMutex(lb_mx);
+    SDL_SemPost(lb_wake);
+}
+
+/* c[] = 320, 300, 200, 100, 50, miss.  mods = "HR,HD" style ("" for none) */
+static void lb_submit(const char *osu_path, const char *title, int keys, float stars,
+                      int score, int combo, const int c[6], const char *mods)
+{
+    if (strstr(mods, "AT")) return;                 /* never send autoplay */
+    if (!lb_name_ok()) {
+        snprintf(lb_sub_msg, sizeof lb_sub_msg, "set a player name in Settings");
+        lb_sub_state = 4;
+        return;
+    }
+    char md5[33];
+    if (!lb_md5_file(osu_path, md5)) return;
+    int notes = c[0] + c[1] + c[2] + c[3] + c[4] + c[5];
+    char t[151];
+    snprintf(t, sizeof t, "%s", title);
+    char *et = curl_easy_escape(NULL, t, 0);
+    char *en = curl_easy_escape(NULL, lb_name, 0);
+    char *em = curl_easy_escape(NULL, mods, 0);
+    char body[2048];
+    snprintf(body, sizeof body,
+        "name=%s&token=%s&map=%s&title=%s&keys=%d&notes=%d&stars=%.2f"
+        "&score=%d&combo=%d&c320=%d&c300=%d&c200=%d&c100=%d&c50=%d&c0=%d&mods=%s",
+        en ? en : "", lb_token, md5, et ? et : "", keys, notes, stars,
+        score, combo, c[0], c[1], c[2], c[3], c[4], c[5], em ? em : "");
+    curl_free(et); curl_free(en); curl_free(em);
+    SDL_LockMutex(lb_mx);
+    snprintf(lb_last_body, sizeof lb_last_body, "%s", body);
+    lb_sub_state = 1;
+    SDL_UnlockMutex(lb_mx);
+    lb_queue_add(body);
+}
+
+static void lb_init(void)
+{
+    lb_load_player();
+    sceSysmoduleLoadModule(SCE_SYSMODULE_NET);
+    static void *net_mem = NULL;
+    net_mem = malloc(1 << 20);
+    SceNetInitParam np;
+    np.memory = net_mem;
+    np.size = 1 << 20;
+    np.flags = 0;
+    if (sceNetInit(&np) < 0) { free(net_mem); net_mem = NULL; }  /* already on: fine */
+    sceNetCtlInit();
+    curl_global_init(CURL_GLOBAL_ALL);
+    lb_mx = SDL_CreateMutex();
+    lb_wake = SDL_CreateSemaphore(0);
+    lb_thread = SDL_CreateThreadWithStackSize(lb_worker, "lb", 256 * 1024, NULL);
+}
+
+static void lb_quit(void)
+{
+    lb_quit_flag = 1;
+    if (lb_wake) SDL_SemPost(lb_wake);
+    if (lb_thread) SDL_DetachThread(lb_thread);
+}
+/* ===== End of online leaderboard ===== */
 
 /* ================= Gameplay ================= */
 typedef struct { int t, end, col, hold, state; } Note;
@@ -2563,6 +3190,7 @@ static void set_status(const char *msg) {
 static void play_warmup(void);
 static void load_beats(const MapInfo *m);   /* written further down */
 
+static void ig_reset(void);
 static void start_map(int idx) {
     if (idx < 0) return;
     play_cleanup();
@@ -2599,6 +3227,7 @@ static void start_map(int idx) {
     combo = max_combo = 0;
     load_beats(&maps[idx]);
     he_reset();
+    ig_reset();
     touch_reset();
     rear_fingers = 0;
     cover_frac = COVER_MIN;
@@ -2649,6 +3278,17 @@ static void finish_map(void) {
     memcpy(res_n, cnt, sizeof res_n);
     res_rank = (play_mods & MODS_UNSAVED) ? 0
              : scores_add(&maps[play_map], res_score, res_acc, res_combo, cnt, play_mods);
+    lb_sub_state = 0;
+    if (!(play_mods & MODS_UNSAVED)) {                 /* never RD / AT / CM */
+        const MapInfo *om = &maps[play_map];
+        char osu[512], otitle[400], omods[64];
+        snprintf(osu, sizeof osu, "%s/%s", om->folder, om->file);
+        snprintf(otitle, sizeof otitle, "%s - %s [%s]", om->artist, om->title, om->version);
+        mods_string(play_mods, omods, sizeof omods);
+        for (char *p = omods; *p; p++) if (*p == ' ') *p = ',';   /* "HR HD" -> "HR,HD" */
+        lb_submit(osu, otitle, om->keys, om->stars, res_score, res_combo, cnt, omods);
+    }
+
     play_cleanup();
     screen = SCR_RESULTS;
 }
@@ -2796,7 +3436,6 @@ static void update_play(void) {
     if (first_live >= note_n && now > last_note_time + 1500) finish_map();
 }
 
-/* ======================= END OF PART 3 (of 6) ======================= */
 /* ================= Drawing: gameplay ================= */
 /* draws a skin image tinted with the chosen note colour */
 static void copy_tinted(SDL_Texture *t, int c, const SDL_Rect *r) {
@@ -3013,6 +3652,162 @@ static void draw_early_late(int x, int align) {
                   he_last < 0 ? C_EARLY : C_LATE, align);
 }
 
+/* ---- In-game leaderboard (far left of the playfield) ----
+   Select during a song: Global -> Local -> Off. Shows 5 rows around you,
+   starting from the lowest score; you move up as you pass people. */
+#define IG_SHOW 5        /* rows shown at once */
+#define IG_MAX  100      /* most scores kept per map */
+#define IG_Y    70       /* top of the board (make bigger to move it down) */
+#define IG_W    210      /* width (gets narrower if the lanes are wide) */
+#define IG_ROW  46       /* row height */
+
+typedef struct { char name[24], mods[40]; int score, combo; float acc; } IgRow;
+static IgRow  ig_loc[IG_MAX], ig_glb[IG_MAX];
+static int    ig_loc_n = 0, ig_glb_n = 0, ig_built = 0;
+static int    ig_gl = 0;                  /* global: 0 not asked, 1 waiting, 2 ready, 3 offline */
+static int    ig_last_above = -1;
+static Uint32 ig_gl_since = 0, ig_flash = 0, ig_msg_until = 0;
+
+static void ig_reset(void) {
+    ig_loc_n = ig_glb_n = 0;
+    ig_built = 0;
+    ig_gl = 0;
+    ig_last_above = -1;
+    ig_flash = 0;
+}
+
+/* Select: Global -> Local -> Off -> Global */
+static void ig_cycle(void) {
+    opt_ingame_lb = (opt_ingame_lb + 2) % 3;
+    ig_last_above = -1;
+    ig_msg_until = SDL_GetTicks() + 1200;
+    settings_save();
+}
+
+static int cmp_ig(const void *a, const void *b) {
+    return ((const IgRow *)b)->score - ((const IgRow *)a)->score;
+}
+
+/* your saved scores for this map, best first */
+static void ig_build_local(void) {
+    char key[300];
+    ig_loc_n = 0;
+    ig_built = 1;
+    map_key(&maps[play_map], key, sizeof key);
+    for (int i = 0; i < all_count && ig_loc_n < IG_MAX; i++) {
+        const ScoreEntry *e = &all_scores[i];
+        if (strcmp(e->key, key)) continue;
+        IgRow *r = &ig_loc[ig_loc_n++];
+        fmt_date(e->when, "%y-%m-%d", r->name, sizeof r->name);
+        mods_string(e->mods, r->mods, sizeof r->mods);
+        r->score = e->score;
+        r->combo = e->combo;
+        r->acc   = e->acc;
+    }
+    qsort(ig_loc, ig_loc_n, sizeof *ig_loc, cmp_ig);
+}
+
+/* copies the online top list for this map (asks the server if it isn't loaded) */
+static void ig_poll_global(void) {
+    char osu[512];
+    int same, st, ask = 0;
+    if (ig_gl >= 2) return;
+    snprintf(osu, sizeof osu, "%s/%s", maps[play_map].folder, maps[play_map].file);
+    SDL_LockMutex(lb_mx);
+    same = !strcmp(lb_state_map, osu);
+    st = lb_state;
+    if (same && st == 2) {
+        ig_glb_n = lb_row_n < IG_MAX ? lb_row_n : IG_MAX;
+        for (int i = 0; i < ig_glb_n; i++) {
+            IgRow *r = &ig_glb[i];
+            const LbRow *e = &lb_rows[i];
+            snprintf(r->name, sizeof r->name, "%s", e->name);
+            snprintf(r->mods, sizeof r->mods, "%s", e->mods);
+            for (char *p = r->mods; *p; p++) if (*p == ',') *p = ' ';
+            r->score = e->score;
+            r->combo = e->combo;
+            r->acc   = e->acc;
+        }
+        ig_gl = 2;
+    } else if (ig_gl == 0) {
+        ask = 1;
+    } else if (same && st == 3 && SDL_GetTicks() - ig_gl_since > 1500) {
+        ig_gl = 3;
+    }
+    SDL_UnlockMutex(lb_mx);
+    if (ask) { lb_request_top(osu); ig_gl = 1; ig_gl_since = SDL_GetTicks(); }
+}
+
+static void draw_ingame_board(void) {
+    char buf[96], fitb[96], sc[24];
+    Uint32 now = SDL_GetTicks();
+    int mode = opt_ingame_lb;
+    int toast = !SDL_TICKS_PASSED(now, ig_msg_until);
+    int w = IG_W < lay_x0 - 24 ? IG_W : lay_x0 - 24;
+    const int x = 12;
+
+    if (mode == 0 || play_map < 0 || w < 130) {
+        if (toast) draw_text(font_small, "Leaderboard off  (Select)", x, IG_Y - 26, C_YELLOW, 0);
+        return;
+    }
+    if (!ig_built) ig_build_local();
+    if (mode == 2) ig_poll_global();
+
+    const IgRow *rows = mode == 2 ? ig_glb : ig_loc;
+    int n = mode == 2 ? (ig_gl == 2 ? ig_glb_n : 0) : ig_loc_n;
+
+    /* header */
+    const char *head = mode == 1 ? "Local"
+                     : ig_gl == 3 ? "Global (offline)"
+                     : ig_gl < 2  ? "Global (loading...)" : "Global";
+    draw_text(font_small, head, x, IG_Y - 26, toast ? C_YELLOW : C_GREY, 0);
+
+    /* where you are: everyone with a score >= yours is above you */
+    int cur = score_current(), above = 0;
+    while (above < n && rows[above].score >= cur) above++;
+    if (ig_last_above >= 0 && above < ig_last_above) ig_flash = now;   /* passed someone */
+    ig_last_above = above;
+
+    int total = n + 1;                                  /* + you */
+    int show = total < IG_SHOW ? total : IG_SHOW;
+    int start = clampi(above - (IG_SHOW - 1), 0, total - show);
+
+    for (int i = 0; i < show; i++) {
+        int p = start + i, y = IG_Y + i * IG_ROW;
+        if (p == above) {
+            /* your row (live) */
+            if (now - ig_flash < 400) fill(x, y, w, IG_ROW - 4, 170, 140, 60, 235);
+            else                      fill(x, y, w, IG_ROW - 4, 90, 75, 40, 220);
+            fill(x, y, 4, IG_ROW - 4, 255, 210, 90, 255);
+            if (mode == 2 && above >= n && ig_glb_n >= LB_MAX_ROWS) snprintf(buf, sizeof buf, "--");
+            else snprintf(buf, sizeof buf, "#%d", p + 1);
+            draw_fast(font_small, buf, x + 10, y + 2, C_YELLOW, 0);
+            fit_text(font_small, lb_name[0] ? lb_name : "You", w - 62, fitb, sizeof fitb);
+            draw_text(font_small, fitb, x + 54, y + 2, C_YELLOW, 0);
+            fmt_score(cur, sc, sizeof sc);
+            draw_fast(font_small, sc, x + 10, y + 21, C_WHITE, 0);
+            snprintf(buf, sizeof buf, "%.2f%%", calc_acc());
+            draw_fast(font_small, buf, x + w - 8, y + 21, C_GREY, 2);
+        } else {
+            const IgRow *e = &rows[p < above ? p : p - 1];
+            int mw = 0;
+            fill(x, y, w, IG_ROW - 4, 30, 30, 45, 170);
+            snprintf(buf, sizeof buf, "#%d", p + 1);
+            draw_text(font_small, buf, x + 10, y + 2, C_GREY, 0);
+            if (e->mods[0]) {
+                fit_text(font_small, e->mods, 70, fitb, sizeof fitb);
+                mw = draw_text(font_small, fitb, x + w - 8, y + 2, C_YELLOW, 2) + 8;
+            }
+            fit_text(font_small, e->name, w - 62 - mw, fitb, sizeof fitb);
+            draw_text(font_small, fitb, x + 54, y + 2, C_WHITE, 0);
+            fmt_score(e->score, sc, sizeof sc);
+            draw_text(font_small, sc, x + 10, y + 21, C_WHITE, 0);
+            snprintf(buf, sizeof buf, "%.2f%%", e->acc);
+            draw_text(font_small, buf, x + w - 8, y + 21, C_GREY, 2);
+        }
+    }
+}
+
 static void draw_play(void) {
     int now = song_time();
     char buf[64], sc[24];
@@ -3043,6 +3838,7 @@ static void draw_play(void) {
         draw_hit_error(cx);
         draw_early_late(jx, ja);
         if (opt_health_bar) draw_health_bar(health);
+        draw_ingame_board();
         if (opt_hud) {
             fmt_score(score_current(), sc, sizeof sc);
             draw_fast(font_big, sc, SCREEN_W - 12, 4, C_WHITE, 2);
@@ -3216,6 +4012,8 @@ static void utf16_to_8(const SceWChar16 *s, char *out, size_t max) {
 }
 #endif
 
+static int ime_name = 0;    /* 1 = the keyboard is for the player name, 0 = song search */
+
 static void search_open(void) {
 #ifdef __vita__
     static int dlg_ready = 0;
@@ -3228,23 +4026,30 @@ static void search_open(void) {
     }
     SceImeDialogParam p;
     sceImeDialogParamInit(&p);
-    utf8_to_16("Search songs", ime_title, 32);
-    utf8_to_16(search_text, ime_init, 130);
+    utf8_to_16(ime_name ? "Player name (3-16)" : "Search songs", ime_title, 32);
+    utf8_to_16(ime_name ? lb_name : search_text, ime_init, 130);
     memset(ime_buf, 0, sizeof ime_buf);
     p.supportedLanguages = 0x0001FFFF;
     p.languagesForced = SCE_TRUE;
-    p.type = SCE_IME_TYPE_DEFAULT;
+    p.type = ime_name ? SCE_IME_TYPE_BASIC_LATIN : SCE_IME_TYPE_DEFAULT;
     p.option = 0;
     p.textBoxMode = SCE_IME_DIALOG_TEXTBOX_MODE_DEFAULT;
     p.title = ime_title;
-    p.maxTextLength = 127;
+    p.maxTextLength = ime_name ? 16 : 127;
     p.initialText = ime_init;
     p.inputTextBuffer = ime_buf;
     if (sceImeDialogInit(&p) >= 0) { ime_open = 1; sm_open = 0; }
-    else set_status("Couldn't open the keyboard");
+    else { ime_name = 0; set_status("Couldn't open the keyboard"); }
 #else
+    ime_name = 0;
     set_status("Search uses the Vita keyboard");
 #endif
+}
+
+/* opens the keyboard to type the online player name */
+static void name_open(void) {
+    ime_name = 1;
+    search_open();
 }
 
 /* called every frame: picks up the text when the keyboard closes */
@@ -3255,17 +4060,34 @@ static void search_update(void) {
     memset(&r, 0, sizeof r);
     sceImeDialogGetResult(&r);
     if (r.button == SCE_IME_DIALOG_BUTTON_ENTER) {
-        char msg[64];
-        utf16_to_8(ime_buf, search_text, sizeof search_text);
-        trim(search_text);
-        apply_song_list();
-        if (search_text[0]) {
-            snprintf(msg, sizeof msg, "%d song%s found", g_group_count, g_group_count == 1 ? "" : "s");
-            set_status(msg);
+        char msg[80];
+        if (ime_name) {
+            char typed[130], old[17];
+            snprintf(old, sizeof old, "%s", lb_name);
+            utf16_to_8(ime_buf, typed, sizeof typed);
+            trim(typed);
+            lb_set_name(typed);
+            if (lb_name_ok()) {
+                snprintf(msg, sizeof msg, "Player name set to %s", lb_name);
+                set_status(msg);
+            } else {                                   /* too short: keep the old name */
+                snprintf(lb_name, sizeof lb_name, "%s", old);
+                lb_save_player();
+                set_status("Names need 3-16 letters, numbers, _ or -");
+            }
+        } else {
+            utf16_to_8(ime_buf, search_text, sizeof search_text);
+            trim(search_text);
+            apply_song_list();
+            if (search_text[0]) {
+                snprintf(msg, sizeof msg, "%d song%s found", g_group_count, g_group_count == 1 ? "" : "s");
+                set_status(msg);
+            }
         }
     }
     sceImeDialogTerm();
     ime_open = 0;
+    ime_name = 0;
     ime_block_until = SDL_GetTicks() + 300;   /* the keyboard's X press won't start a song */
 #endif
 }
@@ -3448,6 +4270,28 @@ static void draw_results(void) {
     else if (res_rank == 1)      snprintf(buf, sizeof buf, "New best score!");
     else                         snprintf(buf, sizeof buf, "Rank #%d on this map", res_rank);
     draw_text(font_small, buf, 250, 410, (res_mods & MODS_UNSAVED) ? C_GREY : C_YELLOW, 1);
+    /* online leaderboard */
+    {
+        SDL_Color oc = C_GREY;
+        buf[0] = 0;
+        switch (lb_sub_state) {
+        case 1: snprintf(buf, sizeof buf, "Sending score online..."); break;
+        case 2:
+            if (lb_sub_improved)
+                snprintf(buf, sizeof buf, "Global #%d   +%.0fpp   (%.0fpp, player #%d)",
+                         lb_sub_rank, lb_sub_pp, lb_sub_total, lb_sub_prank);
+            else
+                snprintf(buf, sizeof buf, "Sent - your online best is higher");
+            oc = C_YELLOW;
+            break;
+        case 3: snprintf(buf, sizeof buf, "Offline: %s", lb_sub_msg); break;
+        case 4: snprintf(buf, sizeof buf, "Not sent: %s", lb_sub_msg); oc = C_RED; break;
+        }
+        if (buf[0]) {
+            fit_text(font_small, buf, 360, fitb, sizeof fitb);
+            draw_text(font_small, fitb, 250, 438, oc, 1);
+        }
+    }
 
     /* judgements */
     fill(500, 96, 400, 370, 0, 0, 0, 170);
@@ -3538,7 +4382,164 @@ static void failed_button(int b) {
     }
 }
 
-/* ======================= END OF PART 4 (of 6) ======================= */
+/* ================= Song select leaderboard (Local / Global) ================= */
+#define LB_X   620
+#define LB_Y   44
+#define LB_W   324
+#define LB_ROW 52
+
+static int    gl_pending = 0;      /* 1 = waiting before asking the server */
+static Uint32 gl_since = 0;        /* when the selected map last changed */
+static char   gl_for[512] = "";    /* .osu file the Global board is showing */
+
+/* Start on song select: switches between Local and Global */
+static void lb_toggle_view(void) {
+    opt_lb_global = !opt_lb_global;
+    gl_for[0] = 0;                 /* ask the server again */
+    settings_save();
+}
+
+/* panel + "Local | Global" tabs (the active one is yellow and underlined) */
+static void draw_board_head(int global, const char *right) {
+    fill(LB_X, LB_Y, LB_W, 40 + LB_SHOW * LB_ROW + 6, 0, 0, 0, 160);
+    int w1 = draw_text(font_small, "Local", LB_X + 12, LB_Y + 8, global ? C_GREY : C_YELLOW, 0);
+    draw_text(font_small, "|", LB_X + 12 + w1 + 8, LB_Y + 8, C_GREY, 0);
+    int gx = LB_X + 12 + w1 + 22;
+    int w2 = draw_text(font_small, "Global", gx, LB_Y + 8, global ? C_YELLOW : C_GREY, 0);
+    fill(global ? gx : LB_X + 12, LB_Y + 31, global ? w2 : w1, 2, 255, 210, 90, 255);
+    if (right && right[0]) draw_text(font_small, right, LB_X + LB_W - 12, LB_Y + 8, C_GREY, 2);
+}
+
+/* your own scores from scores.txt */
+static void draw_local_board(void) {
+    char buf[128], sc[24], date[16], mb[64], fb[64];
+    snprintf(buf, sizeof buf, "%d score%s", lb_total, lb_total == 1 ? "" : "s");
+    draw_board_head(0, buf);
+    if (lb_count == 0) {
+        draw_text(font_small, "No scores yet", LB_X + 12, LB_Y + 50, C_GREY, 0);
+        return;
+    }
+    for (int i = 0; i < lb_count; i++) {
+        int y = LB_Y + 40 + i * LB_ROW;
+        if (i == 0) fill(LB_X + 6, y, LB_W - 12, LB_ROW - 6, 90, 75, 40, 210);
+        else        fill(LB_X + 6, y, LB_W - 12, LB_ROW - 6, 45, 45, 65, 210);
+
+        SDL_Color gc;
+        const char *g = lb_grade(lb[i].acc, &gc);
+        draw_text(font_big, g, LB_X + 14, y - 2, gc, 0);
+
+        fmt_score(lb[i].score, sc, sizeof sc);
+        snprintf(buf, sizeof buf, "#%d  %s", i + 1, sc);
+        draw_text(font_small, buf, LB_X + 76, y + 1, C_WHITE, 0);
+        if (lb[i].mods) {                                   /* mods on the right */
+            mods_string(lb[i].mods, mb, sizeof mb);
+            fit_text(font_small, mb, 100, fb, sizeof fb);
+            draw_text(font_small, fb, LB_X + LB_W - 14, y + 1, C_YELLOW, 2);
+        }
+
+        fmt_date(lb[i].when, "%y-%m-%d", date, sizeof date);
+        snprintf(buf, sizeof buf, "%.2f%%  %dx  %s", lb[i].acc, lb[i].combo, date);
+        int tw = draw_text(font_small, buf, LB_X + 76, y + 23, C_GREY, 0);
+        SDL_Color fcc;
+        const char *fc = fc_tag(lb[i].n, &fcc);             /* FC / PFC after the date */
+        if (fc) draw_text(font_small, fc, LB_X + 76 + tw + 10, y + 23, fcc, 0);
+    }
+}
+
+/* top scores from maniavita.com for the selected map */
+static void draw_global_board(int idx) {
+    static LbRow rows[LB_MAX_ROWS];
+    static const SDL_Color c_fc = {120, 200, 255, 255};
+    char osu[512], buf[160], fitb[160], sc[24], err[96] = "";
+    const MapInfo *m = &maps[idx];
+    Uint32 now = SDL_GetTicks();
+
+    /* only ask the server once the player stops scrolling for 400 ms */
+    snprintf(osu, sizeof osu, "%s/%s", m->folder, m->file);
+    if (strcmp(osu, gl_for)) {
+        snprintf(gl_for, sizeof gl_for, "%s", osu);
+        gl_pending = 1;
+        gl_since = now;
+    }
+    if (gl_pending && now - gl_since >= 400) {
+        gl_pending = 0;
+        lb_request_top(osu);
+    }
+
+    /* copy the rows if they belong to this map (old rows stay while refreshing) */
+    int n = 0, st = 1;
+    SDL_LockMutex(lb_mx);
+    if (!strcmp(lb_state_map, osu)) {
+        n = lb_row_n;
+        memcpy(rows, lb_rows, sizeof(LbRow) * n);
+        st = lb_state;
+        if (st == 1 && n > 0) st = 2;
+        if (st == 3) snprintf(err, sizeof err, "%s", lb_err);
+    }
+    SDL_UnlockMutex(lb_mx);
+
+    if (st == 2) snprintf(buf, sizeof buf, "%d online", n);
+    else buf[0] = 0;
+    draw_board_head(1, buf);
+
+    if (st == 1) {
+        draw_text(font_small, "Loading...", LB_X + 12, LB_Y + 50, C_GREY, 0);
+        return;
+    }
+    if (st == 3) {
+        draw_text(font_small, "Offline", LB_X + 12, LB_Y + 50, C_RED, 0);
+        fit_text(font_small, err[0] ? err : "couldn't reach maniavita.com", LB_W - 24, fitb, sizeof fitb);
+        draw_text(font_small, fitb, LB_X + 12, LB_Y + 76, C_GREY, 0);
+        draw_text(font_small, "Start: back to Local scores", LB_X + 12, LB_Y + 110, C_GREY, 0);
+        return;
+    }
+    if (n == 0) {
+        draw_text(font_small, "No online scores yet", LB_X + 12, LB_Y + 50, C_GREY, 0);
+        draw_text(font_small, "Play it to be the first!", LB_X + 12, LB_Y + 76, C_GREY, 0);
+        return;
+    }
+
+    /* your own row: highlighted, and shown in 8th place if you're further down */
+    int mine = -1;
+    if (lb_name[0])
+        for (int i = 0; i < n; i++)
+            if (!strcmp(rows[i].name, lb_name)) { mine = i; break; }
+
+    int show = n < LB_SHOW ? n : LB_SHOW;
+    for (int i = 0; i < show; i++) {
+        int r = (i == LB_SHOW - 1 && mine >= LB_SHOW) ? mine : i;
+        const LbRow *e = &rows[r];
+        int y = LB_Y + 40 + i * LB_ROW, me = r == mine;
+        if (me) fill(LB_X + 6, y, LB_W - 12, LB_ROW - 6, 90, 75, 40, 220);
+        else    fill(LB_X + 6, y, LB_W - 12, LB_ROW - 6, 45, 45, 65, 210);
+        if (me) fill(LB_X + 6, y, 4, LB_ROW - 6, 255, 210, 90, 255);
+
+        fmt_score(e->score, sc, sizeof sc);
+        int sw = draw_text(font_small, sc, LB_X + LB_W - 14, y + 1, C_WHITE, 2);
+        snprintf(buf, sizeof buf, "#%d  %s", e->rank, e->name);
+        fit_text(font_small, buf, LB_W - 28 - sw - 10, fitb, sizeof fitb);
+        draw_text(font_small, fitb, LB_X + 14, y + 1, me ? C_YELLOW : C_WHITE, 0);
+
+        snprintf(buf, sizeof buf, "%.2f%%  %dx", e->acc, e->combo);
+        int tw = draw_text(font_small, buf, LB_X + 14, y + 23, C_GREY, 0);
+        if (e->miss == 0) draw_text(font_small, "FC", LB_X + 14 + tw + 10, y + 23, c_fc, 0);
+
+        if (e->mods[0]) snprintf(buf, sizeof buf, "%s  %.0fpp", e->mods, e->pp);
+        else            snprintf(buf, sizeof buf, "%.0fpp", e->pp);
+        for (char *p = buf; *p; p++) if (*p == ',') *p = ' ';      /* "HR,HD" -> "HR HD" */
+        fit_text(font_small, buf, 140, fitb, sizeof fitb);
+        draw_text(font_small, fitb, LB_X + LB_W - 14, y + 23, e->mods[0] ? C_YELLOW : C_GREY, 2);
+    }
+}
+
+static void draw_leaderboard(void) {
+    int idx = selected_map_index();
+    if (idx != lb_for_map) { lb_refresh(idx); gl_for[0] = 0; }
+    if (idx < 0) return;
+    if (opt_lb_global) draw_global_board(idx);
+    else               draw_local_board();
+}
+
 /* ================= Song select ================= */
 #define SEL_LX 16          /* song list position and size */
 #define SEL_LY 116
@@ -3660,7 +4661,7 @@ static void draw_select(void) {
 
     draw_list_status();
     draw_leaderboard();
-    draw_help("X: Play   Sq: Mods   O: Sort/Search   Tri: Settings   Select: Scores   Start: Rescan");
+    draw_help("X: Play   Sq: Mods   O: Sort/Search   Tri: Settings   Select: Scores   Start: Local/Global");
     draw_mods_menu();
 }
 
@@ -3678,7 +4679,10 @@ static void select_button(int b) {
     case SDL_CONTROLLER_BUTTON_X:             mm_open = 1; break;     /* Square: mods */
     case SDL_CONTROLLER_BUTTON_Y:             settings_open(); break;
     case SDL_CONTROLLER_BUTTON_BACK:          scores_open(0); break;
-    case SDL_CONTROLLER_BUTTON_START:         rescan_songs(); break;
+    case SDL_CONTROLLER_BUTTON_START:
+        if (g_group_count == 0) rescan_songs();    /* no songs: Start still rescans */
+        else lb_toggle_view();                      /* Local <-> Global */
+        break;
     }
 }
 
@@ -3734,14 +4738,14 @@ static void select_touch_up(void) {
 /* ================= Settings (with live preview) ================= */
 enum { S_SKIN, S_SKIN_LAYOUT, S_NOTE_COLOR, S_SPEED, S_OFFSET, S_VOLUME, S_SFX_VOLUME, S_LANE_W, S_HIT_Y,
        S_HUD, S_HEALTH_BAR, S_HIT_ERROR, S_JUDGE_POS, S_SHOW_BG, S_VIDEO, S_BG_DIM, S_PREVIEW, S_DELAY,
-       S_TOUCH, S_REAR, S_FILTER,
+       S_TOUCH, S_REAR, S_FILTER, S_PLAYER,
        S_BINDS1, S_BINDS2, S_BINDS3, S_BINDS4, S_BINDS5,
        S_BACK, S_COUNT };
 static const char *set_labels[S_COUNT] = {
     "Skin", "Skin layout", "Note colour", "Scroll speed", "Audio offset", "Music volume", "Hitsound volume",
     "Lane width", "Hit position", "Score display", "Health bar", "Hit error bar", "Combo position",
     "Song background", "Video background", "Background dim", "Song preview", "Start delay",
-    "Touch screen", "Rear touch (middle)", "Key modes",
+    "Touch screen", "Rear touch (middle)", "Key modes", "Player name",
     "1K buttons...", "2K buttons...", "3K buttons...", "4K buttons...", "5K buttons...",
     "Save & back"
 };
@@ -3750,11 +4754,18 @@ static const char *set_labels[S_COUNT] = {
 #define SET_ROW_H   34
 #define SET_ROWS    13      /* rows visible at once (the list scrolls) */
 static int set_sel = 0, set_top = 0, set_prev_keys = 4, set_old_filter = 0;
+static int set_tab = 0;                                 /* 0 = Settings, 1 = Profile */
 static int bind_k = 3, bind_sel = 0, bind_wait = 0;     /* bind_k: 0 = 1K ... 4 = 5K */
+
+/* Profile tab: which key mode the stats are for (0 = all, 1-5 = 1K-5K) */
+#define PF_MODES 6
+static const char *pf_mode_names[PF_MODES] = { "All", "1K", "2K", "3K", "4K", "5K" };
+static int pf_mode = 0;
 
 static void settings_open(void) {
     set_sel = 0;
     set_top = 0;
+    set_tab = 0;
     set_old_filter = opt_filter;
     screen = SCR_SETTINGS;
 }
@@ -3764,6 +4775,18 @@ static void settings_close(void) {
     if (opt_filter != set_old_filter) build_song_groups();
     lb_for_map = -2;
     screen = SCR_SELECT;
+}
+
+/* asks the server for the profile in the chosen key mode */
+static void profile_open(void) {
+    if (!lb_name_ok()) return;
+    pf_request(pf_mode);
+}
+
+static void set_tab_switch(int tab) {
+    if (tab == set_tab) return;
+    set_tab = tab;
+    if (set_tab == 1 && pf_state != 1) profile_open();
 }
 
 static const char *on_off(int v) { return v ? "On" : "Off"; }
@@ -3819,6 +4842,7 @@ static void set_value(int i, char *out, size_t n) {
     case S_TOUCH:      snprintf(out, n, "%s", on_off(opt_touch)); break;
     case S_REAR:       snprintf(out, n, "%s", on_off(opt_rear)); break;
     case S_FILTER:     snprintf(out, n, "%s", filter_names[opt_filter]); break;
+    case S_PLAYER:     snprintf(out, n, "%s", lb_name[0] ? lb_name : "(not set)"); break;
     case S_BINDS1: case S_BINDS2: case S_BINDS3: case S_BINDS4: case S_BINDS5:
         snprintf(out, n, ">"); break;
     }
@@ -3952,11 +4976,135 @@ static void draw_settings_preview(void) {
     SDL_RenderSetViewport(ren, NULL);
 }
 
+/* "Settings | Profile" tabs at the top left (the active one is underlined) */
+static void draw_set_tabs(void) {
+    int w1 = draw_text(font_big, "Settings", 24, 6, set_tab == 0 ? C_WHITE : C_GREY, 0);
+    int px = 24 + w1 + 28;
+    int w2 = draw_text(font_big, "Profile", px, 6, set_tab == 1 ? C_WHITE : C_GREY, 0);
+    fill(set_tab == 0 ? 24 : px, 48, set_tab == 0 ? w1 : w2, 3, 255, 210, 90, 255);
+}
+
+/* ---- Profile tab: your online stats from maniavita.com ---- */
+static void draw_profile(void) {
+    PfPlay plays[10];
+    char buf[300], fitb[300], name[17], msg[96];
+    int n, rank, total, st;
+    float pp;
+
+    draw_background(selected_map_index(), opt_bg_dim > 80 ? opt_bg_dim : 80, 250);
+    fill(0, 0, SCREEN_W, SCREEN_H, 10, 10, 18, 200);
+    draw_set_tabs();
+
+    SDL_LockMutex(lb_mx);
+    st = pf_state;
+    n = pf_play_n;
+    memcpy(plays, pf_plays, sizeof(PfPlay) * n);
+    rank = pf_rank;
+    total = pf_plays_total;
+    pp = pf_pp;
+    snprintf(name, sizeof name, "%s", pf_name);
+    snprintf(msg, sizeof msg, "%s", pf_msg);
+    SDL_UnlockMutex(lb_mx);
+
+    if (!lb_name_ok()) {
+        draw_text(font_big, "No player name set", 24, 90, C_WHITE, 0);
+        draw_text(font_small, "Press L to go back to Settings, then choose \"Player name\".",
+                  24, 146, C_GREY, 0);
+        draw_text(font_small, "Your profile is created on maniavita.com with your first online score.",
+                  24, 174, C_GREY, 0);
+        draw_help("L/R: tabs   Start: rescan songs   O: back");
+        return;
+    }
+
+    /* key mode chips: All 1K 2K 3K 4K 5K */
+    for (int i = 0; i < PF_MODES; i++) {
+        int x = 24 + i * 64, sel = i == pf_mode;
+        if (sel) fill(x, 62, 56, 30, 220, 170, 60, 235);
+        else     fill(x, 62, 56, 30, 45, 45, 65, 230);
+        draw_text(font_small, pf_mode_names[i], x + 28, 66, sel ? C_DARK : C_WHITE, 1);
+    }
+    snprintf(buf, sizeof buf, "maniavita.com/u/%s", lb_name);
+    draw_text(font_small, buf, SCREEN_W - 24, 66, C_GREY, 2);
+
+    if (st == 1 || st == 0) {
+        draw_text(font_small, "Loading...", 24, 112, C_GREY, 0);
+    } else if (st == 3) {
+        draw_text(font_big, "Offline", 24, 106, C_RED, 0);
+        fit_text(font_small, msg[0] ? msg : "couldn't reach maniavita.com", SCREEN_W - 48, fitb, sizeof fitb);
+        draw_text(font_small, fitb, 24, 156, C_GREY, 0);
+        draw_text(font_small, "Press X to try again.", 24, 184, C_GREY, 0);
+    } else if (st == 4) {
+        snprintf(buf, sizeof buf, "%s isn't on the server yet", lb_name);
+        draw_text(font_big, buf, 24, 106, C_WHITE, 0);
+        draw_text(font_small, "Finish a song (without RD / AT / CM) while online to create your profile.",
+                  24, 156, C_GREY, 0);
+    } else {
+        /* name, rank, pp, plays */
+        int rw;
+        if (rank > 0) {
+            snprintf(buf, sizeof buf, "#%d", rank);
+            rw = draw_text(font_big, buf, SCREEN_W - 24, 104, C_YELLOW, 2);
+        } else {
+            rw = draw_text(font_big, "Unranked", SCREEN_W - 24, 104, C_GREY, 2);
+        }
+        fit_text(font_big, name[0] ? name : lb_name, SCREEN_W - 48 - rw - 20, fitb, sizeof fitb);
+        draw_text(font_big, fitb, 24, 104, C_WHITE, 0);
+
+        snprintf(buf, sizeof buf, "%.2f pp     %d play%s     %s", pp, total, total == 1 ? "" : "s",
+                 pf_mode ? pf_mode_names[pf_mode] : "All key modes");
+        draw_text(font_small, buf, 24, 152, C_WHITE, 0);
+        fill(24, 182, SCREEN_W - 48, 2, 255, 255, 255, 40);
+
+        /* top 10 plays */
+        draw_text(font_small, "Best plays", 24, 190, C_YELLOW, 0);
+        if (n == 0) draw_text(font_small, "No plays in this key mode yet", 24, 222, C_GREY, 0);
+        for (int i = 0; i < n; i++) {
+            int y = 218 + i * 28;
+            if (i % 2 == 0) fill(20, y - 2, SCREEN_W - 40, 28, 255, 255, 255, 14);
+            snprintf(buf, sizeof buf, "%d", i + 1);
+            draw_text(font_small, buf, 34, y, C_GREY, 0);
+            fit_text(font_small, plays[i].title, 560, fitb, sizeof fitb);
+            draw_text(font_small, fitb, 64, y, C_WHITE, 0);
+            snprintf(buf, sizeof buf, "%dK", plays[i].keys);
+            draw_text(font_small, buf, 640, y, C_GREY, 0);
+            if (plays[i].mods[0]) {
+                snprintf(buf, sizeof buf, "%s", plays[i].mods);
+                for (char *p = buf; *p; p++) if (*p == ',') *p = ' ';
+                fit_text(font_small, buf, 100, fitb, sizeof fitb);
+                draw_text(font_small, fitb, 684, y, C_YELLOW, 0);
+            }
+            snprintf(buf, sizeof buf, "%.2f%%", plays[i].acc);
+            draw_text(font_small, buf, 860, y, C_GREY, 2);
+            snprintf(buf, sizeof buf, "%.0fpp", plays[i].pp);
+            draw_text(font_small, buf, SCREEN_W - 30, y, C_WHITE, 2);
+        }
+    }
+    draw_help("L/R: tabs   Left/Right: key mode   X: refresh   Start: rescan songs   O: back");
+}
+
+static void profile_button(int b) {
+    switch (b) {
+    case SDL_CONTROLLER_BUTTON_DPAD_LEFT:
+        pf_mode = (pf_mode + PF_MODES - 1) % PF_MODES;
+        profile_open();
+        break;
+    case SDL_CONTROLLER_BUTTON_DPAD_RIGHT:
+        pf_mode = (pf_mode + 1) % PF_MODES;
+        profile_open();
+        break;
+    case SDL_CONTROLLER_BUTTON_A:
+        profile_open();
+        break;
+    }
+}
+
 static void draw_settings(void) {
     char val[160], buf[200], fitb[200];
+    if (set_tab == 1) { draw_profile(); return; }
+
     draw_settings_preview();
     fill(0, 0, SET_PANEL_W, SCREEN_H, 10, 10, 18, 235);
-    draw_text(font_big, "Settings", 24, 6, C_WHITE, 0);
+    draw_set_tabs();
     snprintf(buf, sizeof buf, "%d / %d", set_sel + 1, S_COUNT);
     draw_text(font_small, buf, SET_PANEL_W - 20, 20, C_GREY, 2);
 
@@ -3969,7 +5117,7 @@ static void draw_settings(void) {
         int vw = 0;
         set_value(i, val, sizeof val);
         if (val[0]) {
-            if (sel && i < S_BINDS1) snprintf(buf, sizeof buf, "< %s >", val);
+            if (sel && i < S_BINDS1 && i != S_PLAYER) snprintf(buf, sizeof buf, "< %s >", val);
             else                     snprintf(buf, sizeof buf, "%s", val);
             fit_text(font_mid, buf, 210, fitb, sizeof fitb);
             vw = draw_text(font_mid, fitb, SET_PANEL_W - 28, y, sel ? C_YELLOW : C_GREY, 2);
@@ -3985,15 +5133,24 @@ static void draw_settings(void) {
     fill(SET_PANEL_W - 14, SET_ROW_Y0 - 2, 4, track, 255, 255, 255, 40);
     fill(SET_PANEL_W - 14, ty, 4, th, 255, 210, 90, 200);
 
-    draw_help("Up/Down: select   L/R: page   Left/Right: change   X: open   Sq: 1K-5K preview   O: save & back");
+    draw_help("Up/Down: select  Left/Right: change  X: open  Sq: 1K-5K  L/R: Profile  Start: rescan  O: back");
 }
 
 static void settings_button(int b) {
+    if (ime_open || !SDL_TICKS_PASSED(SDL_GetTicks(), ime_block_until)) return;
+
+    /* the same on both tabs */
     switch (b) {
-    case SDL_CONTROLLER_BUTTON_DPAD_UP:       set_select(set_sel - 1); break;
-    case SDL_CONTROLLER_BUTTON_DPAD_DOWN:     set_select(set_sel + 1); break;
-    case SDL_CONTROLLER_BUTTON_LEFTSHOULDER:  set_select(clampi(set_sel - 6, 0, S_COUNT - 1)); break;
-    case SDL_CONTROLLER_BUTTON_RIGHTSHOULDER: set_select(clampi(set_sel + 6, 0, S_COUNT - 1)); break;
+    case SDL_CONTROLLER_BUTTON_LEFTSHOULDER:  set_tab_switch(0); return;
+    case SDL_CONTROLLER_BUTTON_RIGHTSHOULDER: set_tab_switch(1); return;
+    case SDL_CONTROLLER_BUTTON_START:         rescan_songs(); return;
+    case SDL_CONTROLLER_BUTTON_B:             settings_close(); return;
+    }
+    if (set_tab == 1) { profile_button(b); return; }
+
+    switch (b) {
+    case SDL_CONTROLLER_BUTTON_DPAD_UP:    set_select(set_sel - 1); break;
+    case SDL_CONTROLLER_BUTTON_DPAD_DOWN:  set_select(set_sel + 1); break;
     case SDL_CONTROLLER_BUTTON_DPAD_LEFT:  set_change(set_sel, -1); break;
     case SDL_CONTROLLER_BUTTON_DPAD_RIGHT: set_change(set_sel, 1);  break;
     case SDL_CONTROLLER_BUTTON_A:
@@ -4003,15 +5160,12 @@ static void settings_button(int b) {
             bind_wait = 0;
             set_prev_keys = bind_k + 1;
             screen = SCR_BINDS;
-        } else if (set_sel == S_BACK) settings_close();
+        } else if (set_sel == S_PLAYER) name_open();
+        else if (set_sel == S_BACK) settings_close();
         else set_change(set_sel, 1);
         break;
     case SDL_CONTROLLER_BUTTON_X:                       /* Square: next key mode in the preview */
         set_prev_keys = set_prev_keys % MAX_KEYS + 1;
-        break;
-    case SDL_CONTROLLER_BUTTON_B:
-    case SDL_CONTROLLER_BUTTON_START:
-        settings_close();
         break;
     }
 }
@@ -4072,7 +5226,6 @@ static void binds_button(int b) {
     }
 }
 
-/* ======================= END OF PART 5 (of 6) ======================= */
 /* ================= Pause menu ================= */
 static void pause_button(int b) {
     if (resume_at) {                      /* countdown running */
@@ -4104,8 +5257,12 @@ static void pause_button(int b) {
         break;
     case SDL_CONTROLLER_BUTTON_B:
     case SDL_CONTROLLER_BUTTON_START:
+    case SDL_CONTROLLER_BUTTON_BACK:
+        ig_cycle();
+        break;
         resume_game();
         break;
+
     }
 }
 
@@ -4339,12 +5496,21 @@ static void button_down(int b) {
     if (b < 0) return;
     if (screen == SCR_PLAY && !paused) {
         if (b == SDL_CONTROLLER_BUTTON_START) { pause_game(); return; }
+        if (b == SDL_CONTROLLER_BUTTON_BACK) {          /* Select: leaderboard Global/Local/Off */
+            int bound = 0, kk = kidx(play_keys);
+            for (int c = 0; c < play_keys; c++) if (binds[kk][c] == b) bound = 1;
+            if (!bound) { ig_cycle(); return; }
+        }
         int k = kidx(play_keys);
         for (int c = 0; c < play_keys; c++)
             if (binds[k][c] == b) lane_down(c);
         return;
     }
-    int can_repeat = is_repeat_button(b) && !(screen == SCR_BINDS && bind_wait);
+    int shoulder = b == SDL_CONTROLLER_BUTTON_LEFTSHOULDER || b == SDL_CONTROLLER_BUTTON_RIGHTSHOULDER;
+    int leftright = b == SDL_CONTROLLER_BUTTON_DPAD_LEFT || b == SDL_CONTROLLER_BUTTON_DPAD_RIGHT;
+    int can_repeat = is_repeat_button(b) && !(screen == SCR_BINDS && bind_wait)
+                  && !(screen == SCR_SETTINGS && shoulder)                    /* L/R = tabs */
+                  && !(screen == SCR_SETTINGS && set_tab == 1 && leftright);  /* key mode: 1 request per press */
     on_button(b);
     if (can_repeat) { rep_btn = b; rep_action = screen; rep_next = SDL_GetTicks() + 350; }
 }
@@ -4432,7 +5598,8 @@ int main(int argc, char *argv[]) {
         audio_clock_init();
         Mix_AllocateChannels(16);         /* room for fast hitsounds that overlap */
     }
-
+    lb_init();
+    lb_ca_load();
     make_dir(DATA_DIR);
     make_dir(DATA_DIR "songs");
 
@@ -4568,6 +5735,7 @@ int main(int argc, char *argv[]) {
     play_cleanup();
     settings_save();
     sfx_free();
+    lb_quit();
     Mix_CloseAudio();
     TTF_Quit();
     IMG_Quit();
@@ -4575,4 +5743,3 @@ int main(int argc, char *argv[]) {
     return 0;
 }
 
-/* ======================= END OF PART 6 (of 6, end of file) ======================= */
