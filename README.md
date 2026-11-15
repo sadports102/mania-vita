@@ -1,3 +1,17 @@
+<img width="960" height="544" alt="141256" src="https://github.com/user-attachments/assets/166f3bbf-da1a-44c3-9da6-680872ed0430" />
+<img width="960" height="544" alt="141258" src="https://github.com/user-attachments/assets/9c571ac7-fca4-4ed9-907a-2dbf9c3e9032" />
+<img width="960" height="544" alt="141257" src="https://github.com/user-attachments/assets/5d97c373-c50e-446c-965f-daf1bc50ac29" />
+<img width="960" height="544" alt="141261" src="https://github.com/user-attachments/assets/0b9c1614-c8c7-402c-a12d-fd248bd8097b" />
+<img width="960" height="544" alt="141260" src="https://github.com/user-attachments/assets/b72d84ca-e9c8-41f8-9b1e-64468788eb88" />
+<img width="960" height="544" alt="141259" src="https://github.com/user-attachments/assets/e7cf5c7d-d1dd-469a-b943-f792b8632977" />
+<img width="960" height="544" alt="141264" src="https://github.com/user-attachments/assets/700302f7-bbdf-4f2d-bd52-5321f144969f" />
+<img width="960" height="544" alt="141263" src="https://github.com/user-attachments/assets/2320fd2e-b49d-43d1-8b23-1c96e685a29e" />
+<img width="960" height="544" alt="141262" src="https://github.com/user-attachments/assets/23b3e1f8-6ff0-4c8c-a9ae-3f540186a7e4" />
+<img width="960" height="544" alt="141266" src="https://github.com/user-attachments/assets/5b85722e-78f7-4ffb-8e23-ca995477056c" />
+<img width="960" height="544" alt="141265" src="https://github.com/user-attachments/assets/42f4b881-451a-4399-a2da-d50709dc05b1" />
+<img width="960" height="544" alt="141269" src="https://github.com/user-attachments/assets/075305f7-171f-43e4-89d1-d70798508907" />
+<img width="960" height="544" alt="141268" src="https://github.com/user-attachments/assets/3fe4c9c9-790f-4c1f-aae9-253ab3f2acb5" />
+<img width="960" height="544" alt="141267" src="https://github.com/user-attachments/assets/01938b1b-fab0-44fb-8e76-8ba974857282" />
 # mania vita!
 
 A homebrew osu!mania-style rhythm game for the **PlayStation Vita**, written in C with SDL2.
